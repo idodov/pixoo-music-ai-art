@@ -61,7 +61,13 @@ Ensure your AppDaemon environment has these Python packages installed:
 1. Go to **HACS** > **Integrations**.
 2. Click the three dots (top-right) and select **Custom repositories**.
 3. Paste your GitHub repository URL and select **AppDaemon** as the category.
-4. Click **Install**.
+   <img width="457" height="635" alt="image" src="https://github.com/user-attachments/assets/18c30f7f-7cd5-473d-b06d-fa236ae94547" />
+4. Click **ADD**.
+5. Go back to the community store and search for `pixoo music ai art`
+<img width="495" height="273" alt="image" src="https://github.com/user-attachments/assets/9797d2ec-b2c2-4b07-98d4-c2395189c1ae" />
+
+6. Click **DOWNLOAD**
+
 
 ---
 
