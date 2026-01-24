@@ -1,0 +1,13 @@
+{
+  "name": "Pixoo Music AI Art",
+  "description": "Ultra-Vivid conceptual AI art generator for Divoom Pixoo 64.",
+  "render_readme": true,
+  "appdaemon": true,
+  "keywords": [
+    "pixoo64",
+    "divoom",
+    "ai",
+    "music",
+    "art"
+  ]
+}
