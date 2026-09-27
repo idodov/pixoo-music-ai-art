@@ -12,7 +12,8 @@ pixoo_music_ai:
   pixoo_ip: "192.168.1.50"
   full_control: true
   boost: true
-  ai_model: "turbo"
+  ai_model: "flux"
+  pollinations_api_key: "YOUR_KEY_HERE"
 """
 
 import appdaemon.plugins.hass.hassapi as hass
@@ -35,7 +36,7 @@ class PixooMusicAI(hass.Hass):
         self.pixoo_ip = self.args.get("pixoo_ip")
         self.pixoo_url = f"http://{self.pixoo_ip}:80/post"
         self.pollinations_key = self.args.get("pollinations_api_key", None)
-        self.ai_model = self.args.get("ai_model", "turbo") 
+        self.ai_model = self.args.get("ai_model", "flux") 
         self.boost = self.args.get("boost", True)
         self.full_control = self.args.get("full_control", True)
 
@@ -54,10 +55,15 @@ class PixooMusicAI(hass.Hass):
         self.listen_state(self.music_state_changed, self.media_player, attribute="all")
         _LOGGER.info(f"Pixoo Ultra-Vivid Engine: Monitoring {self.media_player}")
 
+    async def terminate(self):
+        """Cleanup network sessions on reload/stop."""
+        if self.gen_task and not self.gen_task.done():
+            self.gen_task.cancel()
+        if self.session and not self.session.closed:
+            await self.session.close()
+
     def _generate_conceptual_prompt(self, artist, title):
         """Creates a high-contrast, color-optimized prompt."""
-        
-        # 1. Color Pairing (Optimized for LED luminosity)
         color_pairings = [
             "Amber and Deep Teal",
             "Neon Pink and Electric Blue",
@@ -67,7 +73,6 @@ class PixooMusicAI(hass.Hass):
             "Cybernetic Cyan and Magenta"
         ]
         
-        # 2. Advanced Styles (Visual Weight)
         styles = [
             "Hyper-detailed digital fusion portrait",
             "High-contrast minimalist vector poster",
@@ -76,7 +81,6 @@ class PixooMusicAI(hass.Hass):
             "Retro-futurist cinematic keyart"
         ]
 
-        # 3. Dynamic Fusions
         fusions = [
             f"The artist {artist} literally personifying the essence of the song '{title}'",
             f"A surreal manifestation of '{title}' featuring the iconic likeness of {artist}",
@@ -84,7 +88,6 @@ class PixooMusicAI(hass.Hass):
             f"The musical spirit of {artist} fused with the surreal imagery of '{title}'"
         ]
 
-        # 4. Angle/Composition
         compositions = [
             "Centered close-up portrait",
             "Extreme dramatic angle",
@@ -97,7 +100,6 @@ class PixooMusicAI(hass.Hass):
         selected_fusion = random.choice(fusions)
         selected_comp = random.choice(compositions)
 
-        # Building the multi-weighted prompt
         return (f"Professional square album cover. {selected_comp} of {selected_fusion}. "
                 f"Likeness inspired by musical artist {artist}. "
                 f"Theme: {title}. Style: {selected_style}. Colors: {selected_colors}. "
@@ -123,7 +125,6 @@ class PixooMusicAI(hass.Hass):
             if self.gen_task and not self.gen_task.done():
                 self.gen_task.cancel()
 
-            # Check Cache first
             if new_track_id in self.image_cache:
                 _LOGGER.info(f"Using cached art for: {new_track_id}")
                 await self.display_cached_art(new_track_id)
@@ -142,7 +143,8 @@ class PixooMusicAI(hass.Hass):
 
             await self.send_pixoo_command({"Command": "Channel/OnOffScreen", "OnOff": 1})
             await self.generate_ai_art(artist, title, track_id)
-        except asyncio.CancelledError: pass 
+        except asyncio.CancelledError:
+            pass 
 
     async def generate_ai_art(self, artist, title, track_id):
         prompt = self._generate_conceptual_prompt(artist, title)
@@ -152,35 +154,37 @@ class PixooMusicAI(hass.Hass):
             "model": self.ai_model,
             "width": 256,
             "height": 256,
-            "seed": random.randint(0, 999999),
-            "nologo": "true",
-            "enhance": "false",
-            "safe": "false"
+            "seed": random.randint(0, 999999)
         }
-        if self.pollinations_key: params["key"] = self.pollinations_key
+        if self.pollinations_key:
+            params["key"] = self.pollinations_key.strip()
 
         url = f"https://gen.pollinations.ai/image/{urllib.parse.quote(prompt)}?{urllib.parse.urlencode(params)}"
         
         try:
-            async with self.session.get(url, timeout=25) as resp:
+            timeout = aiohttp.ClientTimeout(total=30)
+            async with self.session.get(url, timeout=timeout) as resp:
                 if resp.status == 200:
                     data = await resp.read()
                     if len(data) > 5000:
-                        b64_pixels = await self.run_in_executor(self._process_image_sync, data)
+                        loop = asyncio.get_running_loop()
+                        b64_pixels = await loop.run_in_executor(None, self._process_image_sync, data)
                         if b64_pixels:
                             self.image_cache[track_id] = b64_pixels
                             await self.display_b64(b64_pixels)
+                else:
+                    _LOGGER.warning(f"Pollinations returned status {resp.status}")
+        except asyncio.CancelledError:
+            pass
         except Exception as e:
             _LOGGER.error(f"Generation error: {e}")
 
     async def display_cached_art(self, track_id):
-        """Displays art already in the session memory."""
         self.is_showing_art = True
         await self.send_pixoo_command({"Command": "Channel/OnOffScreen", "OnOff": 1})
         await self.display_b64(self.image_cache[track_id])
 
     async def display_b64(self, b64_data):
-        """Sends raw pixel data to Pixoo."""
         await self.send_pixoo_command({
             "Command": "Draw/CommandList",
             "CommandList": [
@@ -203,23 +207,29 @@ class PixooMusicAI(hass.Hass):
             
             img = img.quantize(colors=64, method=Image.Quantize.MAXCOVERAGE).convert("RGB")
             return base64.b64encode(img.tobytes()).decode("utf-8")
-        except: return None
+        except Exception as e:
+            _LOGGER.error(f"Error processing image: {e}")
+            return None
 
     async def stop_art_mode(self, state):
         self.is_showing_art = False
         self.current_track_id = None
-        if self.gen_task: self.gen_task.cancel()
+        if self.gen_task and not self.gen_task.done():
+            self.gen_task.cancel()
         await self.send_pixoo_command({"Command": "Channel/SetIndex", "SelectIndex": self.previous_channel})
         if self.full_control and state == "off":
-             await self.send_pixoo_command({"Command": "Channel/OnOffScreen", "OnOff": 0})
+            await self.send_pixoo_command({"Command": "Channel/OnOffScreen", "OnOff": 0})
 
     async def get_current_channel(self):
         try:
             async with self.session.post(self.pixoo_url, json={"Command": "Channel/GetIndex"}, timeout=3) as r:
                 return (await r.json()).get("SelectIndex", 0) if r.status == 200 else 0
-        except: return 0 
+        except Exception:
+            return 0 
 
     async def send_pixoo_command(self, payload):
         try:
-            async with self.session.post(self.pixoo_url, json=payload, timeout=5): pass
-        except: pass
+            async with self.session.post(self.pixoo_url, json=payload, timeout=5):
+                pass
+        except Exception:
+            pass
